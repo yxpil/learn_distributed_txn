@@ -19,35 +19,7 @@ via **pre-freeze + a state machine**.
 
 ## 1. Architecture
 
-```mermaid
-flowchart TB
-    Biz["Business code<br/>(only calls gateway)"] --> GW
-
-    subgraph COORD["Business-layer framework — coordinator process"]
-        GW["gateway<br/>virtual atomic API"]
-        EXE["executor<br/>state machine"]
-        POL["poller"]
-        DL["deadletter<br/>exponential backoff"]
-        REC["offline_reconcile"]
-        GW --> EXE
-        EXE -.-> POL
-        POL -.-> DL
-    end
-
-    GW --> UserDB
-    GW --> ShopDB
-    GW --> TxnDB
-
-    subgraph UserDB["user node (proc)"]
-        U[("user asset DB<br/>hash-sharded JSON<br/>freeze markers + flows<br/>self-check plugin")]
-    end
-    subgraph ShopDB["shop node (proc)"]
-        S[("inventory DB<br/>per-merchant shards<br/>freeze markers<br/>self-check plugin")]
-    end
-    subgraph TxnDB["txn node (proc)"]
-        T[("global txn DB<br/>replicas + snapshots<br/>txn lifecycle records")]
-    end
-```
+![Architecture overview](docs/arch_overview.png)
 
 - **Hard constraints**: no asset change may bypass the framework and write a node directly;
   assets support freeze markers (a local transaction marker that does not deduct the real

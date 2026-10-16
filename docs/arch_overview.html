@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Architecture overview</title>
+<style>
+  body{margin:0;padding:16px;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;background:#fff;}
+  svg{width:100%;height:auto;display:block;margin:0 auto;}
+</style>
+</head>
+<body>
+<svg viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="#475569"/></marker>
+  </defs>
+
+  <!-- business code -->
+  <rect x="330" y="18" width="340" height="48" rx="8" fill="#fff7e6" stroke="#d97706" stroke-width="1.5"/>
+  <text x="500" y="40" text-anchor="middle" font-size="14" font-weight="600" fill="#92400e">Business code (gateway only)</text>
+  <text x="500" y="58" text-anchor="middle" font-size="11" fill="#b45309">never writes a DB node directly</text>
+  <line x1="500" y1="66" x2="500" y2="92" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- coordinator frame -->
+  <rect x="70" y="96" width="860" height="170" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+  <text x="90" y="120" font-size="14" font-weight="700" fill="#1d4ed8">Business-layer framework — coordinator process (virtual atomic outside, pre-freeze + state machine inside)</text>
+
+  <rect x="95" y="138" width="150" height="60" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.3"/>
+  <text x="170" y="162" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f172a">gateway</text>
+  <text x="170" y="180" text-anchor="middle" font-size="10.5" fill="#475569">virtual atomic API</text>
+  <text x="170" y="194" text-anchor="middle" font-size="10.5" fill="#475569">txn id + idempotency key</text>
+
+  <rect x="265" y="138" width="180" height="60" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.3"/>
+  <text x="355" y="162" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f172a">executor</text>
+  <text x="355" y="180" text-anchor="middle" font-size="10.5" fill="#475569">freeze -&gt; FROZEN -&gt; commit</text>
+  <text x="355" y="194" text-anchor="middle" font-size="10.5" fill="#475569">phase-based compensation</text>
+
+  <rect x="465" y="138" width="140" height="60" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.3"/>
+  <text x="535" y="162" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f172a">poller</text>
+  <text x="535" y="180" text-anchor="middle" font-size="10.5" fill="#475569">scans non-terminal</text>
+  <text x="535" y="194" text-anchor="middle" font-size="10.5" fill="#475569">transactions</text>
+
+  <rect x="625" y="138" width="140" height="60" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.3"/>
+  <text x="695" y="162" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f172a">dead-letter</text>
+  <text x="695" y="180" text-anchor="middle" font-size="10.5" fill="#475569">reconnect + verify</text>
+  <text x="695" y="194" text-anchor="middle" font-size="10.5" fill="#475569">exponential backoff</text>
+
+  <rect x="785" y="138" width="125" height="60" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.3"/>
+  <text x="847" y="162" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f172a">reconcile</text>
+  <text x="847" y="180" text-anchor="middle" font-size="10.5" fill="#475569">flow x record</text>
+  <text x="847" y="194" text-anchor="middle" font-size="10.5" fill="#475569">cross-check</text>
+
+  <rect x="95" y="215" width="815" height="30" rx="6" fill="#ecfdf5" stroke="#059669" stroke-width="1.2"/>
+  <text x="502" y="235" text-anchor="middle" font-size="11.5" fill="#047857">HTTP / JSON only coordinator -&gt; nodes. Nodes never talk to each other.</text>
+
+  <!-- arrows down -->
+  <line x1="230" y1="266" x2="230" y2="330" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="500" y1="266" x2="500" y2="330" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="770" y1="266" x2="770" y2="330" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- three nodes -->
+  <rect x="80" y="334" width="300" height="170" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+  <text x="230" y="358" text-anchor="middle" font-size="14" font-weight="700" fill="#15803d">user node (proc :6001)</text>
+  <text x="230" y="376" text-anchor="middle" font-size="11" fill="#166534">user asset DB, hash-sharded by user_id</text>
+  <text x="230" y="400" text-anchor="middle" font-size="11.5" fill="#1f2937">balance real value · frozen marker</text>
+  <text x="230" y="418" text-anchor="middle" font-size="11.5" fill="#1f2937">asset flows (JSON shards)</text>
+  <text x="230" y="448" text-anchor="middle" font-size="11" font-weight="600" fill="#15803d">local txn: file lock + atomic JSON</text>
+  <text x="230" y="470" text-anchor="middle" font-size="11" fill="#b45309">self-check plugin on restart</text>
+
+  <rect x="350" y="334" width="300" height="170" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+  <text x="500" y="358" text-anchor="middle" font-size="14" font-weight="700" fill="#15803d">shop node (proc :6002)</text>
+  <text x="500" y="376" text-anchor="middle" font-size="11" fill="#166534">inventory DB, sharded by merchant</text>
+  <text x="500" y="400" text-anchor="middle" font-size="11.5" fill="#1f2937">stock real value · frozen marker</text>
+  <text x="500" y="418" text-anchor="middle" font-size="11.5" fill="#1f2937">single-node HA only, no cross-DB</text>
+  <text x="500" y="448" text-anchor="middle" font-size="11" font-weight="600" fill="#15803d">local txn: file lock + atomic JSON</text>
+  <text x="500" y="470" text-anchor="middle" font-size="11" fill="#b45309">self-check plugin on restart</text>
+
+  <rect x="620" y="334" width="300" height="170" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+  <text x="770" y="358" text-anchor="middle" font-size="14" font-weight="700" fill="#b91c1c">txn node (proc :6003)</text>
+  <text x="770" y="376" text-anchor="middle" font-size="11" fill="#b91c1c">global transaction state DB</text>
+  <text x="770" y="400" text-anchor="middle" font-size="11.5" fill="#1f2937">txns.json + replicas</text>
+  <text x="770" y="418" text-anchor="middle" font-size="11.5" fill="#1f2937">txn lifecycle records + snapshots</text>
+  <text x="770" y="448" text-anchor="middle" font-size="11" font-weight="600" fill="#b91c1c">source of truth for state machine</text>
+  <text x="770" y="470" text-anchor="middle" font-size="11" fill="#475569">queried by user/shop on self-check</text>
+
+  <text x="500" y="535" text-anchor="middle" font-size="11" fill="#64748b">Single-node local consistency inside each DB; cross-DB consistency is entirely the business-layer framework's job.</text>
+</svg>
+</body>
+</html>
