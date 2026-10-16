@@ -1,0 +1,16 @@
+# 运行时生成的数据（三个库的 JSON 分片、事务副本、快照、日志）
+data/
+**/_logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/

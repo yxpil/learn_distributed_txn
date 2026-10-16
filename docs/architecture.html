@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>防止脑裂分布式事务框架 - 架构图</title>
+<style>
+  body{margin:0;padding:16px;font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#fff;}
+  svg{max-width:1200px;width:100%;height:auto;display:block;margin:0 auto;}
+</style>
+</head>
+<body>
+<div style="max-width:1200px;margin:0 auto;">
+  <div style="text-align:center;font-size:20px;font-weight:700;color:#0f172a;margin-bottom:4px;">防止脑裂分布式事务框架 · 三个独立 Node 服务器进程</div>
+  <div style="text-align:center;font-size:13px;color:#64748b;margin-bottom:10px;">库与库之间互不通信、不感知；所有跨库协调 / 锁定 / 状态流转 / 补偿全部收敛在业务层框架</div>
+  <svg viewBox="0 0 1200 880">
+    <defs>
+      <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="#475569"/></marker>
+      <marker id="arrO" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="#ea580c"/></marker>
+    </defs>
+    <rect x="380" y="20" width="440" height="46" rx="8" fill="#fff7e6" stroke="#d97706" stroke-width="1.5"/>
+    <text x="600" y="40" text-anchor="middle" font-size="14" font-weight="600" fill="#92400e">业务代码（只调 gateway.order）</text>
+    <text x="600" y="58" text-anchor="middle" font-size="11.5" fill="#b45309">禁止绕过框架直连任何数据库节点</text>
+    <line x1="600" y1="66" x2="600" y2="92" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+    <rect x="90" y="96" width="1020" height="230" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="110" y="120" font-size="14.5" font-weight="700" fill="#1d4ed8">业务层框架（协调器进程）—— 对外虚拟原子事务，对内「预冻结 + 状态机」最终一致</text>
+    <rect x="120" y="140" width="170" height="70" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="205" y="166" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">API 网关</text>
+    <text x="205" y="184" text-anchor="middle" font-size="10.5" fill="#475569">虚拟原子接口</text>
+    <text x="205" y="199" text-anchor="middle" font-size="10.5" fill="#475569">全局事务ID + 幂等号</text>
+    <rect x="310" y="140" width="200" height="70" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="410" y="164" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">事务执行器</text>
+    <text x="410" y="182" text-anchor="middle" font-size="10.5" fill="#475569">预冻结 → FROZEN → 分步提交</text>
+    <text x="410" y="197" text-anchor="middle" font-size="10.5" fill="#475569">按相位精确补偿（返还/解冻）</text>
+    <rect x="530" y="140" width="160" height="70" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="610" y="166" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">轮询调度器</text>
+    <text x="610" y="184" text-anchor="middle" font-size="10.5" fill="#475569">常驻扫描</text>
+    <text x="610" y="199" text-anchor="middle" font-size="10.5" fill="#475569">所有非终态事务</text>
+    <rect x="710" y="140" width="180" height="70" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="800" y="164" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">死信处理</text>
+    <text x="800" y="182" text-anchor="middle" font-size="10.5" fill="#475569">重连核对真实资产状态</text>
+    <text x="800" y="197" text-anchor="middle" font-size="10.5" fill="#475569">指数退避重试</text>
+    <rect x="910" y="140" width="180" height="70" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="1000" y="166" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">离线对账</text>
+    <text x="1000" y="184" text-anchor="middle" font-size="10.5" fill="#475569">流水×单据交叉校验</text>
+    <text x="1000" y="199" text-anchor="middle" font-size="10.5" fill="#475569">孤儿冻结自动解冻+告警</text>
+    <rect x="120" y="225" width="400" height="28" rx="6" fill="#ecfdf5" stroke="#059669" stroke-width="1.2"/>
+    <text x="320" y="244" text-anchor="middle" font-size="11.5" fill="#047857">第一层自愈：轮询器 + 死信重连续做，超限转 MANUAL_REVIEW</text>
+    <rect x="540" y="225" width="550" height="28" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.2"/>
+    <text x="815" y="244" text-anchor="middle" font-size="11.5" fill="#475569">状态机守卫：INIT→FROZEN→SUCCESS / ROLLBACK→ROLLED_BACK / 重试耗尽→MANUAL_REVIEW</text>
+    <text x="600" y="290" text-anchor="middle" font-size="11" fill="#1d4ed8">HTTP / JSON 互连（仅协调器 → 各节点）</text>
+    <path d="M 250 326 L 250 430" stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#arr)"/>
+    <path d="M 600 326 L 600 430" stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#arr)"/>
+    <path d="M 950 326 L 950 430" stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#arr)"/>
+    <rect x="70" y="434" width="300" height="200" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="220" y="458" text-anchor="middle" font-size="14" font-weight="700" fill="#15803d">USER 节点（进程 :6001）</text>
+    <text x="220" y="476" text-anchor="middle" font-size="11" fill="#166534">用户资产库 · user_id 水平分片</text>
+    <line x1="90" y1="486" x2="350" y2="486" stroke="#bbf7d0" stroke-width="1"/>
+    <text x="220" y="504" text-anchor="middle" font-size="11.5" fill="#1f2937">JSON 分片：shard_0~3.json</text>
+    <text x="220" y="522" text-anchor="middle" font-size="11.5" fill="#1f2937">balance 真实余额 · frozen 冻结标记</text>
+    <text x="220" y="540" text-anchor="middle" font-size="11.5" fill="#1f2937">flows 资产流水</text>
+    <text x="220" y="566" text-anchor="middle" font-size="11" font-weight="600" fill="#15803d">本地事务：文件锁 + 原子写 JSON</text>
+    <text x="220" y="586" text-anchor="middle" font-size="11" fill="#b45309">嵌入「启动自检插件」</text>
+    <text x="220" y="604" text-anchor="middle" font-size="11" fill="#b45309">节点重启后自治补偿</text>
+    <rect x="450" y="434" width="300" height="200" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="600" y="458" text-anchor="middle" font-size="14" font-weight="700" fill="#15803d">SHOP 节点（进程 :6002）</text>
+    <text x="600" y="476" text-anchor="middle" font-size="11" fill="#166534">店家库存库 · 按商家分库</text>
+    <line x1="470" y1="486" x2="730" y2="486" stroke="#bbf7d0" stroke-width="1"/>
+    <text x="600" y="504" text-anchor="middle" font-size="11.5" fill="#1f2937">JSON 分片：按 merchant 哈希分片</text>
+    <text x="600" y="522" text-anchor="middle" font-size="11.5" fill="#1f2937">stock 真实库存 · frozen 冻结标记</text>
+    <text x="600" y="540" text-anchor="middle" font-size="11.5" fill="#1f2937">单库本地高可用（无跨库通信）</text>
+    <text x="600" y="566" text-anchor="middle" font-size="11" font-weight="600" fill="#15803d">本地事务：文件锁 + 原子写 JSON</text>
+    <text x="600" y="586" text-anchor="middle" font-size="11" fill="#b45309">嵌入「启动自检插件」</text>
+    <text x="600" y="604" text-anchor="middle" font-size="11" fill="#b45309">节点重启后自治补偿</text>
+    <rect x="830" y="434" width="300" height="200" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="980" y="458" text-anchor="middle" font-size="14" font-weight="700" fill="#b91c1c">TXN 节点（进程 :6003）</text>
+    <text x="980" y="476" text-anchor="middle" font-size="11" fill="#b91c1c">全局事务状态库</text>
+    <line x1="850" y1="486" x2="1110" y2="486" stroke="#fecaca" stroke-width="1"/>
+    <text x="980" y="504" text-anchor="middle" font-size="11.5" fill="#1f2937">txns.json 主库 + replica_0/1 副本</text>
+    <text x="980" y="522" text-anchor="middle" font-size="11.5" fill="#1f2937">全部事务生命周期记录</text>
+    <text x="980" y="540" text-anchor="middle" font-size="11.5" fill="#1f2937">backup/ 定时快照备份</text>
+    <text x="980" y="566" text-anchor="middle" font-size="11" font-weight="600" fill="#b91c1c">多副本高可用 + 定时备份</text>
+    <text x="980" y="586" text-anchor="middle" font-size="11" fill="#475569">被 user/shop 节点回查（第二层自愈）</text>
+    <text x="980" y="604" text-anchor="middle" font-size="11" fill="#475569">状态机/重试/幂等的唯一事实源</text>
+    <path d="M 220 634 L 220 660 L 980 660 L 980 634" stroke="#ea580c" stroke-width="1.6" stroke-dasharray="6 4" fill="none" marker-end="url(#arrO)"/>
+    <path d="M 600 634 L 600 660" stroke="#ea580c" stroke-width="1.6" stroke-dasharray="6 4" fill="none"/>
+    <text x="600" y="682" text-anchor="middle" font-size="11.5" font-weight="600" fill="#ea580c">第二层自愈：节点重启上线 → 主动查 TXN 未完成事务 → 核对本地冻结标记 → 自治补偿回滚</text>
+    <text x="600" y="716" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">事务状态机（全局唯一事实在 TXN 节点）</text>
+    <rect x="60" y="730" width="120" height="46" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="120" y="758" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1e40af">INIT</text>
+    <rect x="240" y="730" width="130" height="46" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="305" y="758" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1e40af">FROZEN</text>
+    <rect x="440" y="730" width="130" height="46" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="505" y="758" text-anchor="middle" font-size="12.5" font-weight="600" fill="#15803d">SUCCESS ✓</text>
+    <rect x="240" y="800" width="130" height="46" rx="8" fill="#ffedd5" stroke="#ea580c"/>
+    <text x="305" y="828" text-anchor="middle" font-size="12.5" font-weight="600" fill="#c2410c">ROLLBACK</text>
+    <rect x="440" y="800" width="140" height="46" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="510" y="828" text-anchor="middle" font-size="12.5" font-weight="600" fill="#15803d">ROLLED_BACK</text>
+    <rect x="660" y="765" width="160" height="46" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="740" y="793" text-anchor="middle" font-size="12.5" font-weight="600" fill="#b91c1c">MANUAL_REVIEW</text>
+    <line x1="180" y1="753" x2="240" y2="753" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="370" y1="753" x2="440" y2="753" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+    <path d="M 305 776 L 305 800" stroke="#ea580c" stroke-width="1.5" marker-end="url(#arrO)"/>
+    <line x1="370" y1="823" x2="440" y2="823" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+    <path d="M 600 753 L 660 775" stroke="#dc2626" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+    <path d="M 370 823 L 660 795" stroke="#dc2626" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+    <text x="900" y="780" font-size="11" fill="#b91c1c">任意非终态重试耗尽 →</text>
+    <text x="900" y="798" font-size="11" fill="#b91c1c">转人工复核并告警</text>
+    <text x="60" y="868" font-size="11" fill="#64748b">示意：实际端口/分片数由 framework/config.py 控制；库内部用文件锁+原子写模拟「单库本地事务/行锁」，库间一致性全靠业务层框架。</text>
+  </svg>
+</div>
+</body>
+</html>
