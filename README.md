@@ -1,9 +1,10 @@
-# Learn Distributed Transactions — Anti-Brain-Split Freeze Framework
+# Learn Distributed Transactions — Anti-Brain-Split Freeze Demo
 
-> **Learning / study repo.** This is a hands-on learning project to understand how
-> distributed transactions can be coordinated **without cross-database voting**, so
-> that database-level split-brain is structurally impossible. It uses JSON files and
-> three independent node processes to simulate real databases — not production code.
+> **Learning / study repo. This is a self-contained demo / simulation, NOT a production framework.**
+> It exists only to understand how distributed transactions can be coordinated **without
+> cross-database voting**, so that database-level split-brain is structurally impossible.
+> It uses JSON files and three independent node processes to simulate real databases —
+> everything in here is a teaching toy, not reusable production code.
 
 All cross-database coordination, locking, state transitions and compensation are
 concentrated in a **business-layer framework**. Databases are fully independent,
