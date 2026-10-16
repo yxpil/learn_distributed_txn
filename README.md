@@ -4,6 +4,10 @@
 
 数据库不落地真实 DB，用 **JSON 文件 + 三个独立 node 服务器进程** 模拟（进程级宕机/隔离/重启自治回滚）。
 
+![架构图](docs/architecture.png)
+
+![时序图](docs/sequence.png)
+
 ---
 
 ## 一、整体架构
