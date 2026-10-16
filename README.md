@@ -1,142 +1,180 @@
-# 防止脑裂分布式事务框架
+# Learn Distributed Transactions — Anti-Brain-Split Freeze Framework
 
-把"跨库协调、锁定、状态流转、补偿"全部收敛到**业务层框架**，数据库各自独立、互不通信、只保证单库本地一致性。对外暴露**虚拟原子事务**，对内用 **预冻结 + 状态机** 实现最终一致。
+> **Learning / study repo.** This is a hands-on learning project to understand how
+> distributed transactions can be coordinated **without cross-database voting**, so
+> that database-level split-brain is structurally impossible. It uses JSON files and
+> three independent node processes to simulate real databases — not production code.
 
-数据库不落地真实 DB，用 **JSON 文件 + 三个独立 node 服务器进程** 模拟（进程级宕机/隔离/重启自治回滚）。
+All cross-database coordination, locking, state transitions and compensation are
+concentrated in a **business-layer framework**. Databases are fully independent,
+never talk to each other, and only guarantee single-node local consistency. From the
+outside this looks like an atomic transaction; inside it reaches eventual consistency
+via **pre-freeze + a state machine**.
 
-![架构图](docs/architecture.png)
+![Architecture](docs/architecture.png)
 
-![时序图](docs/sequence.png)
+![Sequence](docs/sequence.png)
 
 ---
 
-## 一、整体架构
+## 1. Architecture
 
 ```
                         ┌──────────────────────────────────────────────┐
-  业务代码（只调网关）   │           业务层框架（协调器进程）            │
- ─────────────────────► │  gateway(虚拟原子接口) → executor(状态机)     │
-                        │  poller(轮询调度器) → deadletter(死信+退避)   │
-                        │  offline_reconcile(离线对账)                  │
+  Business code (gateway)│        Business-layer framework (coordinator)  │
+ ───────────────────────►│  gateway(virtual atomic) → executor(state m.)│
+                        │  poller → deadletter(backoff retry)            │
+                        │  offline_reconcile                              │
                         └──────────────┬──────────────┬──────────────┘
                           HTTP/JSON    │              │
               ┌───────────▼──────┐  ┌──▼─────────┐  ┌─▼──────────────┐
-              │ user 节点(进程)  │  │ shop 节点   │  │ txn 节点(进程) │
-              │ 用户资产库        │  │ 店家库存库  │  │ 全局事务状态库   │
-              │ ID水平分片 JSON  │  │ 按商家分库  │  │ 多副本+快照备份  │
-              │ 冻结标记+流水    │  │ 冻结标记    │  │ 事务生命周期记录 │
-              │ 自检插件         │  │ 自检插件    │  │                 │
+              │ user node (proc)│  │ shop node   │  │ txn node (proc) │
+              │ user asset DB    │  │ inventory   │  │ global txn DB   │
+              │ hash-sharded JSON│  │ per-merchant│  │ replicas+snap   │
+              │ freeze markers   │  │ freeze mark │  │ txn lifecycle   │
+              │ self-check plugin│  │ self-check  │  │                 │
               └─────────────────┘  └────────────┘  └─────────────────┘
 ```
 
-- **硬性约束**：资产变更禁止绕过框架直连节点；资产支持冻结标记（本地事务标记，不扣真实值，带超时）；每笔操作携带全局事务ID + 幂等号。
-- **库与库之间**：互相完全无感，不通信、不感知（各自的 JSON 分片独立落盘）。
+- **Hard constraints**: no asset change may bypass the framework and write a node directly;
+  assets support freeze markers (a local transaction marker that does not deduct the real
+  value, with a TTL); every operation carries a global transaction ID + idempotency key.
+- **Between databases**: they are completely unaware of each other — no communication,
+  no shared consensus.
 
 ---
 
-## 二、目录与模块（对应你的框架模块拆分）
+## 2. Modules
 
-| 你的模块 | 代码位置 | 说明 |
+| Module | Code | Role |
 |---|---|---|
-| 事务状态存储模块 | `framework/node/logic.py` `TxnNodeLogic` | 全局事务记录读写、多副本 + 定时快照备份 |
-| 状态机核心 | `framework/core/state_machine.py` | 状态流转规则 + 非法流转守卫 |
-| 事务执行器（幂等/预冻结/提交/补偿） | `framework/core/executor.py` | 跨节点协调全部在这里，虚拟原子提交 |
-| 轮询调度器 | `framework/scheduler/poller.py` | 常驻扫描所有非终态事务 |
-| 死信处理模块 | `framework/scheduler/deadletter.py` | 重连核对真实状态 + 指数退避重试 + 超限转人工复核 |
-| 节点自检插件 | `framework/node/self_check.py` | 嵌入用户/店家节点，启动时查全局未完成事务并自治补偿 |
-| 离线对账模块 | `framework/reconcile/offline_reconcile.py` | 交叉校验流水/单据，检出孤儿冻结自动解冻+告警 |
-| 对外 API 网关 | `framework/gateway.py` | 业务调用入口，虚拟原子事务，禁止直连节点 |
+| Transaction state store | `framework/node/logic.py` (`TxnNodeLogic`) | global txn records, replicas + snapshot backups |
+| State machine | `framework/core/state_machine.py` | state transition rules + illegal-transition guard |
+| Transaction executor | `framework/core/executor.py` | cross-node orchestration, idempotency, pre-freeze/commit/compensation |
+| Poller | `framework/scheduler/poller.py` | scans all non-terminal transactions |
+| Dead-letter handler | `framework/scheduler/deadletter.py` | reconnect, verify real state, exponential backoff, escalate to MANUAL_REVIEW |
+| Node self-check plugin | `framework/node/self_check.py` | embedded in user/shop nodes, queries global txn center on startup and self-heals |
+| Offline reconciler | `framework/reconcile/offline_reconcile.py` | cross-checks flows vs records, auto-unfreezes orphan freezes and alerts |
+| API gateway | `framework/gateway.py` | business entry point, virtual atomic ops, no direct node access |
 
-三个 node 服务器进程入口：`node_entry.py`；协调器/一键运行：`run_all.py`。
+Node process entry: `node_entry.py`. One-click runner: `run_all.py`.
 
 ---
 
-## 三、怎么跑
+## 3. How to run
 
 ```bash
-# 一键：自动拉起 user/shop/txn 三个进程，跑 7 个案例，自动收尾
+# One-click: spawn user/shop/txn three processes, run 7 demo cases, shut down
 python run_all.py
 
-# 或手动分别起三个 node，再自己驱动框架
+# Or start the three nodes manually, then drive the framework yourself
 python node_entry.py txn  6003 data/txn
-set TXN_NODE_URL=http://127.0.0.1:6003   # 用户/店家节点需要事务中心地址做自检
+set TXN_NODE_URL=http://127.0.0.1:6003   # user/shop nodes need txn center for self-check
 python node_entry.py user 6001 data/user
 python node_entry.py shop 6002 data/shop
 ```
 
-纯 Python 标准库，无需安装依赖。运行后 `data/` 下即为三个库的 JSON 分片、事务主库、副本与快照备份。
+Pure Python standard library, no third-party dependencies. After running, `data/`
+contains the JSON shards, the txn main store, replicas and snapshot backups.
 
 ---
 
-## 四、状态机枚举
+## 4. State machine
 
 ```
-INIT         事务初始化，开始尝试冻结
-FROZEN       双方资产冻结成功，可以正向扣减
-ROLLBACK     需要执行补偿回滚
-ROLLED_BACK  补偿完成，事务回滚结束（终态）
-SUCCESS      正向操作全部完成（终态）
-MANUAL_REVIEW 重试耗尽，自动处理失败，等待人工复核（终态）
+INIT           transaction created, trying to freeze
+FROZEN         both sides frozen, ready to commit real values
+ROLLBACK       compensation required
+ROLLED_BACK    compensation done (terminal)
+SUCCESS        all forward ops done (terminal)
+MANUAL_REVIEW  retries exhausted, waiting for human review (terminal)
 ```
 
-流转规则（非法流转会被 `state_machine.validate_transition` 拦截）：
+Allowed transitions (illegal ones are rejected by `state_machine.validate_transition`):
 
 ```
 INIT      -> FROZEN | ROLLBACK | MANUAL_REVIEW
 FROZEN    -> SUCCESS | ROLLBACK | MANUAL_REVIEW
 ROLLBACK  -> ROLLED_BACK | MANUAL_REVIEW
-任意非终态 -> MANUAL_REVIEW（重试耗尽，人工复核）
+any non-terminal -> MANUAL_REVIEW (retries exhausted)
 ```
 
-每笔操作的**相位**（PENDING → FROZEN → COMMITTED → COMPENSATED）决定补偿动作：
-- 已扣真实值（COMMITTED）→ **返还**；
-- 仅冻结（FROZEN）→ **解冻**（不动真实值）。
+Each operation has a **phase** (`PENDING → FROZEN → COMMITTED → COMPENSATED`) that
+decides the compensation action:
+- already deducted (COMMITTED) → **refund**;
+- only frozen (FROZEN) → **unfreeze** (real value untouched).
 
 ---
 
-## 五、一笔跨主体交易的正向与补偿流程
+## 5. Forward flow and compensation
 
-**正向**：新建 INIT → 并行本地事务冻结（用户余额、商家库存，只加冻结标记）→ 全成功转 FROZEN → 分步扣真实值（余额、库存）→ 全成功转 SUCCESS。冻结任一失败直接 ROLLBACK。
+**Forward**: create INIT → parallel local-transaction freezes (user balance, shop stock,
+markers only) → all success moves to FROZEN → step-by-step real deductions → all
+success moves to SUCCESS. Any freeze failure goes straight to ROLLBACK.
 
-**补偿**：任何一步失败/超时/网络断开 → ROLLBACK → 按相位逐库返还/解冻 → 全完成转 ROLLED_BACK；中途节点不可达则挂起，交给死信或节点自检续做。
-
----
-
-## 六、两层自愈 + 兜底
-
-1. **第一层：轮询器 + 死信** —— 常驻扫描非终态事务；下游异常转死信队列；消费时**先重连核对真实资产状态**，再决定继续正向或启动补偿，**指数退避**重试；达到最大次数不再无限重试，转 `MANUAL_REVIEW` 并告警。
-2. **第二层：节点启动自检自治回滚** —— 节点宕机/隔离期间业务层下不了补偿指令，等节点重启上线后：主动查全局事务状态中心 → 逐条核对本地冻结标记 → 判定需回滚（状态=ROLLBACK 或冻结超时）→ 在本库本地事务内自动解冻/返还 → 回写全局状态。
-3. **兜底：离线对账 + 快照备份** —— 定时扫描用户/店家流水与全局单据交叉校验，检出**孤儿冻结**（有冻结标记无全局单据）自动解冻 + 告警；全局事务状态库定期快照备份防单据丢失。
+**Compensation**: any step failing / timing out / disconnecting → ROLLBACK → per-node
+refund/unfreeze by phase → all done moves to ROLLED_BACK. If a node is unreachable in
+the middle, the transaction stays pending and is resumed by the dead-letter handler or
+the node self-check plugin.
 
 ---
 
-## 七、边界约定（与你的设计一致）
+## 6. Two layers of self-healing + fallback
 
-1. 用户库、店家库同时彻底崩溃：冻结阶段就无法全部成功，不会产生 FROZEN 状态事务，不存在半完成订单，无需处理。
-2. 唯一极端风险：全局事务状态库数据彻底损毁且无有效备份 → 产生孤儿冻结，由离线对账检出、告警。
-3. 所有库内部只保证单库本地一致性；库与库之间一致性完全交给业务层框架。
+1. **Layer 1: poller + dead-letter** — continuously scans non-terminal txns; downstream
+   failures go to a dead-letter queue; consumption **reconnects and verifies the real
+   asset state first**, then decides whether to continue forward or compensate, with
+   **exponential backoff**; after max attempts it stops retrying and escalates to
+   `MANUAL_REVIEW` with an alert.
+2. **Layer 2: node startup self-check (self-healing rollback)** — while a node is down,
+   the business layer cannot push compensation to it. When the node restarts it actively
+   queries the global txn center, checks its local freeze markers, and (if the txn is
+   ROLLBACK or the freeze TTL expired) performs local unfreeze/refund in its own local
+   transaction, then writes back the global state.
+3. **Fallback: offline reconciliation + snapshots** — periodically cross-checks user/shop
+   flows against global records; **orphan freezes** (a marker with no global record) are
+   auto-unfrozen and alerted; the global txn DB is snapshotted regularly to prevent record loss.
 
 ---
 
-## 八、演示案例（run_all.py 依次执行）
+## 7. Boundaries
 
-| # | 案例 | 覆盖机制 | 结果 |
+1. If both user DB and shop DB are completely down, the freeze phase cannot succeed at
+   all, so no FROZEN transaction is ever created — no half-completed orders.
+2. The only extreme risk: global txn DB is destroyed without a valid backup → orphan
+   freezes appear, detected and alerted by the offline reconciler.
+3. Each DB only guarantees single-node local consistency; cross-DB consistency is
+   entirely the responsibility of the business-layer framework.
+
+---
+
+## 8. Demo cases (run by `run_all.py`)
+
+| # | Case | Mechanism covered | Result |
 |---|---|---|---|
-| 1 | 正常下单（扣余额+扣库存） | 正向流程 + 幂等号重放 | INIT→FROZEN→SUCCESS |
-| 2 | 余额不足冻结失败 | 冻结阶段回滚 | 商家已冻结→解冻，库存不变 |
-| 3 | 商家 COMMIT 被拒 | 提交中回滚 + 返还已扣余额 | ROLLED_BACK |
-| 4 | 店家分片网络隔离→恢复 | 轮询器 + 死信重连续做 | SUCCESS |
-| 5 | 店家进程宕机→重启 | 节点启动自检自治回滚 | ROLLED_BACK |
-| 6 | 孤儿冻结 + 全局库丢失 | 离线对账自动解冻 + 快照恢复 | 清理+告警 |
-| 7 | 店家持续不可达 | 重试耗尽 → MANUAL_REVIEW + 告警 | 人工复核 |
+| 1 | Normal order (deduct balance + stock) | forward flow + idempotent replay | INIT→FROZEN→SUCCESS |
+| 2 | Freeze fails (insufficient balance) | freeze-phase rollback | shop freeze → unfreeze, stock unchanged |
+| 3 | Shop COMMIT rejected | commit-phase rollback + refund deducted balance | ROLLED_BACK |
+| 4 | Shop shard isolated → recovered | poller + dead-letter resume | SUCCESS |
+| 5 | Shop process down → restart | node startup self-check rollback | ROLLED_BACK |
+| 6 | Orphan freeze + global DB loss | offline reconcile auto-unfreeze + snapshot restore | cleanup + alert |
+| 7 | Shop continuously unreachable | retries exhausted → MANUAL_REVIEW + alert | manual review |
 
-运行输出会打印每一步状态流转、终态、余额/库存断言与告警。
+The run prints every state transition, final state, balance/stock assertions and alerts.
 
 ---
 
-## 九、技术说明
+## 9. Notes
 
-- 节点内"单库本地事务"= 文件锁 + 读 JSON 就地修改 + 临时文件原子替换（`framework/node/json_store.py`）。
-- 分片：用户按 `user_id` 哈希水平分片；店家按 `merchant_id` 分库；事务状态库多副本 + 快照备份。
-- 运维注入（演示用）：`/admin/outage` 模拟分片宕机/恢复、`/admin/fail_commit` 模拟提交阶段下游异常、`/admin/restart_selfcheck` 手动触发自检。
-- 重试/超时参数集中在 `framework/config.py`：`BASE_BACKOFF / MAX_ATTEMPTS / FREEZE_TTL`。
+- A node's "single-node local transaction" = file lock + read-modify-write JSON +
+  atomic temp-file replace (`framework/node/json_store.py`).
+- Sharding: users are hashed by `user_id`; shops are sharded by `merchant_id`; the txn
+  state DB is replicated + snapshotted.
+- Demo injection endpoints: `/admin/outage` (simulate shard down/up),
+  `/admin/fail_commit` (simulate downstream failure at commit),
+  `/admin/restart_selfcheck` (manually trigger self-check).
+- Retry/timeout knobs live in `framework/config.py`: `BASE_BACKOFF / MAX_ATTEMPTS / FREEZE_TTL`.
+
+> This repository is for learning and experimentation. For production you would replace
+> the JSON stores with a real database, add poller leader election, a real MQ for the
+> dead-letter queue, and duplicate-detection for self-check vs. poller.
