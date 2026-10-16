@@ -19,21 +19,34 @@ via **pre-freeze + a state machine**.
 
 ## 1. Architecture
 
-```
-                        ┌──────────────────────────────────────────────┐
-  Business code (gateway)│        Business-layer framework (coordinator)  │
- ───────────────────────►│  gateway(virtual atomic) → executor(state m.)│
-                        │  poller → deadletter(backoff retry)            │
-                        │  offline_reconcile                              │
-                        └──────────────┬──────────────┬──────────────┘
-                          HTTP/JSON    │              │
-              ┌───────────▼──────┐  ┌──▼─────────┐  ┌─▼──────────────┐
-              │ user node (proc)│  │ shop node   │  │ txn node (proc) │
-              │ user asset DB    │  │ inventory   │  │ global txn DB   │
-              │ hash-sharded JSON│  │ per-merchant│  │ replicas+snap   │
-              │ freeze markers   │  │ freeze mark │  │ txn lifecycle   │
-              │ self-check plugin│  │ self-check  │  │                 │
-              └─────────────────┘  └────────────┘  └─────────────────┘
+```mermaid
+flowchart TB
+    Biz["Business code<br/>(only calls gateway)"] --> GW
+
+    subgraph COORD["Business-layer framework — coordinator process"]
+        GW["gateway<br/>virtual atomic API"]
+        EXE["executor<br/>state machine"]
+        POL["poller"]
+        DL["deadletter<br/>exponential backoff"]
+        REC["offline_reconcile"]
+        GW --> EXE
+        EXE -.-> POL
+        POL -.-> DL
+    end
+
+    GW --> UserDB
+    GW --> ShopDB
+    GW --> TxnDB
+
+    subgraph UserDB["user node (proc)"]
+        U[("user asset DB<br/>hash-sharded JSON<br/>freeze markers + flows<br/>self-check plugin")]
+    end
+    subgraph ShopDB["shop node (proc)"]
+        S[("inventory DB<br/>per-merchant shards<br/>freeze markers<br/>self-check plugin")]
+    end
+    subgraph TxnDB["txn node (proc)"]
+        T[("global txn DB<br/>replicas + snapshots<br/>txn lifecycle records")]
+    end
 ```
 
 - **Hard constraints**: no asset change may bypass the framework and write a node directly;
